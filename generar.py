@@ -256,6 +256,62 @@ def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | Non
 </body></html>"""
 
 
+CSS_MAN = """
+.hd { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:8px solid #000; padding-bottom:14px; }
+.hd .t { font-size:96px; font-weight:900; letter-spacing:2px; line-height:1; }
+.hd .d { font-size:42px; font-weight:700; }
+.kpis { display:flex; gap:18px; margin-top:28px; }
+.kpi { flex:1; border:4px solid #000; padding:14px 16px; text-align:center; }
+.kpi .l { font-size:26px; font-weight:700; text-transform:uppercase; letter-spacing:1px; }
+.kpi .n { font-size:56px; font-weight:900; margin-top:6px; }
+.kpi .s { font-size:26px; font-weight:600; margin-top:2px; }
+.kpi.neg { background:#000; color:#fff; }
+.cmp { margin-top:22px; font-size:36px; font-weight:700; text-align:center; }
+.lista { margin-top:26px; font-size:34px; font-weight:600; line-height:1.45; }
+.lista b { font-weight:800; }
+"""
+
+
+def pantalla_manana(md: date, man: dict[int, float], hoy: dict[int, float] | None, generado: datetime) -> str:
+    """Resumen del día siguiente, para rotar con la pantalla de ahora."""
+    mi = {k: v * FACTOR_IMPUESTOS for k, v in man.items()}
+    media = mean(mi.values())
+    h_min = min(mi, key=mi.get)
+    h_max = max(mi, key=mi.get)
+    cmp = ""
+    if hoy:
+        media_hoy = mean(v * FACTOR_IMPUESTOS for v in hoy.values())
+        dif = (media / media_hoy - 1) * 100
+        if abs(dif) < 3:
+            cmp = "Parecido a hoy de media"
+        else:
+            cmp = f"Un {abs(dif):.0f} % más {'caro' if dif > 0 else 'barato'} que hoy de media"
+    serie = [(md, k, mi[k]) for k in sorted(mi)]
+    f2 = mejor_franja(serie, 2)
+    f3 = mejor_franja(serie, 3)
+    baratas = sorted(sorted(mi, key=mi.get)[:4])
+    caras = sorted(sorted(mi, key=mi.get, reverse=True)[:4])
+    def horas(hs):
+        return ", ".join(f"{h}–{h + 1}" for h in hs) + " h"
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>{CSS}{CSS_MAN}</style></head><body>
+<div class="hd"><span class="t">MAÑANA</span><span class="d">{DIAS[md.weekday()]} {md.day} {MESES[md.month - 1]}</span></div>
+<div class="kpis">
+  <div class="kpi"><div class="l">Más barata</div><div class="n">{euros(mi[h_min])}</div><div class="s">{h_min}–{h_min + 1} h</div></div>
+  <div class="kpi"><div class="l">Media</div><div class="n">{euros(media)}</div><div class="s">€/kWh</div></div>
+  <div class="kpi neg"><div class="l">Más cara</div><div class="n">{euros(mi[h_max])}</div><div class="s">{h_max}–{h_max + 1} h</div></div>
+</div>
+<div class="cmp">{cmp}</div>
+<div class="sec">{grafico(mi, md, None, 470)}</div>
+<div class="lista">
+  Lavadora o lavavajillas (2 h): <b>{f2[2]}–{f2[3]} h</b> · {euros(f2[0])} €<br>
+  Programa largo (3 h): <b>{f3[2]}–{f3[3]} h</b> · {euros(f3[0])} €<br>
+  Horas más baratas: <b>{horas(baratas)}</b><br>
+  Evita: <b>{horas(caras)}</b>
+</div>
+<div class="foot"><span>PVPC 2.0TD · con impuestos · datos REE</span><span>act. {generado:%d/%m %H:%M}</span></div>
+</body></html>"""
+
+
 def render(paginas: dict[str, str], carpeta: Path):
     from PIL import Image
     from playwright.sync_api import sync_playwright
@@ -281,12 +337,15 @@ img{{max-width:100%;width:420px;border:1px solid #888;background:#fff;display:bl
 code{{font-size:.9em}}</style></head><body>
 <h1>Panel de luz</h1><p>Actualizado: {generado}. Días con precios: {dias}.</p>
 <p>Ahora el Kindle muestra:</p><img id="i" alt="pantalla actual">
+<p>Mañana (rota con la anterior cuando ya hay precios):</p><img id="m" alt="resumen de mañana" onerror="this.style.display='none'">
 <p><a href="paquete.tar">paquete.tar</a> · <a href="estado.json">estado.json</a></p>
 <script>
 var d=new Date(),p=function(n){{return(n<10?'0':'')+n}};
 var f=new Intl.DateTimeFormat('en-CA',{{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}}).formatToParts(d);
 var g={{}};f.forEach(function(x){{g[x.type]=x.value}});
 document.getElementById('i').src='precios/'+g.year+g.month+g.day+'_'+g.hour+'.png';
+var t=new Date(Date.UTC(+g.year,+g.month-1,+g.day+1));
+document.getElementById('m').src='precios/'+t.getUTCFullYear()+p(t.getUTCMonth()+1)+p(t.getUTCDate())+'_manana.png';
 </script></body></html>"""
 
 
@@ -311,6 +370,7 @@ def main():
     paginas = {f"{hoy:%Y%m%d}_{h:02d}.png": pantalla(hoy, h, p_hoy, p_man, ahora) for h in sorted(p_hoy)}
     if p_man:
         paginas.update({f"{man:%Y%m%d}_{h:02d}.png": pantalla(man, h, p_man, None, ahora) for h in sorted(p_man)})
+        paginas[f"{man:%Y%m%d}_manana.png"] = pantalla_manana(man, p_man, p_hoy, ahora)
 
     out = Path(a.salida)
     render(paginas, out / "precios")
