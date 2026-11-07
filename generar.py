@@ -25,7 +25,9 @@ from pathlib import Path
 from statistics import mean
 from zoneinfo import ZoneInfo
 
-VERSION = "7.3"  # súbelo en cada cambio del generador
+VERSION = "7.4"
+# Hueco para el indicador de batería que pinta el Kindle encima (mismas cifras en comun.sh)
+BAT_X, BAT_Y, BAT_W, BAT_H = 892, 40, 120, 52  # súbelo en cada cambio del generador
 COMMIT = (os.environ.get("GITHUB_SHA") or "local")[:7]
 MADRID = ZoneInfo("Europe/Madrid")
 W, H = 1072, 1448
@@ -212,6 +214,7 @@ CSS = """
 html,body { width:1072px; height:1448px; background:#fff; color:#000; font-family:Inter,'DejaVu Sans',sans-serif; }
 body { padding:48px 60px; position:relative; }
 .top { display:flex; justify-content:space-between; align-items:baseline; font-size:36px; font-weight:600; }
+.top .bat { width:144px; }
 .top b { font-weight:800; }
 .big { margin-top:20px; border:10px solid #000; height:290px; display:flex; flex-direction:column;
   align-items:center; justify-content:center; }
@@ -256,7 +259,7 @@ body { padding:48px 60px; position:relative; }
 .eje.con-banda { margin-top:30px; }
 .prox { margin-top:20px; border:10px solid #000; padding:18px 26px 20px; }
 .prox .l { font-size:28px; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; }
-.prox .h { font-size:92px; font-weight:900; line-height:1.05; margin-top:6px; }
+.prox .h { font-size:92px; font-weight:900; line-height:1.05; margin-top:6px; white-space:nowrap; }
 .prox .h small { font-size:44px; font-weight:800; }
 .prox .p { font-size:32px; font-weight:700; margin-top:8px; }
 .prox.ya { background:#000; color:#fff; }
@@ -302,20 +305,21 @@ def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | Non
         media, bloque = pf
         (d0, h0, _), (d1, h1, _) = bloque[0], bloque[-1]
         fin = (h1 + 1) % 24
-        fin_txt = "24" if (d1 == d0 and h1 == 23) else str(fin)
+        fin_txt = "24" if (d1 == d0 and h1 == 23) else f"{fin:02d}"
         if d0 == d:
             franja_hoy = (h0, 24 if d1 != d else h1 + 1)
         if d1 == md:
             franja_man = (0 if d0 != md else h0, h1 + 1)
         dia = "hoy" if d0 == d else "mañana"
         if d1 != d0:
-            cuando = f"{h0}–{fin} h <small>(cruza medianoche)</small>"
+            cuando = f"{h0:02d}–{fin:02d} h <small>(cruza medianoche)</small>"
         else:
-            cuando = f"{dia} {h0}–{fin_txt} h" if dia == "mañana" else f"{h0}–{fin_txt} h"
+            cuando = f"{dia} {h0:02d}–{fin_txt} h" if dia == "mañana" else f"{h0:02d}–{fin_txt} h"
         horas_txt = f"{len(bloque)} h" if len(bloque) == 3 else f"{len(bloque)} h, las que quedan con datos"
         if d0 == d and h0 == h:
-            prox = (f'<div class="prox ya"><div class="l">Estás en la mejor franja ({horas_txt})</div>'
-                    f'<div class="h">{"hasta medianoche" if fin == 0 else f"hasta las {fin}:00"}</div>'
+            acaba = " · acaba mañana" if d1 != d else ""
+            prox = (f'<div class="prox ya"><div class="l">Estás en la mejor franja ({horas_txt}){acaba}</div>'
+                    f'<div class="h">{"hasta medianoche" if fin == 0 else f"hasta las {fin:02d}:00"}</div>'
                     f'<div class="p">media {euros(media)} €/kWh</div></div>')
         else:
             ahorro = (1 - media / v) * 100
@@ -336,7 +340,7 @@ def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | Non
         man_html = ('<div class="man-status pending"><strong>PRECIOS DE MAÑANA</strong>'
                     '<span class="dato">Llegan hacia las 21:00</span></div>')
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>
-<div class="top"><span><b>{DIAS[d.weekday()].capitalize()} {d.day} {MESES[d.month - 1]}</b> · {h}:00–{h + 1}:00</span><span>periodo {per}</span></div>
+<div class="top"><span><b>{DIAS[d.weekday()].capitalize()} {d.day} {MESES[d.month - 1]}</b> · {h:02d}:00–{h + 1:02d}:00</span><span>periodo {per}</span><span class="bat"></span></div>
 {prox}
 <div class="ahora {c}"><span class="v">Ahora {euros(v)}<small> €/kWh</small></span><span class="c">{c.upper()} PARA HOY</span></div>
 <div class="leyenda"><i></i>mejor franja de 3 h, buscando {alcance}</div>
@@ -399,6 +403,27 @@ def pantalla_manana(md: date, man: dict[int, float], hoy: dict[int, float] | Non
 </body></html>"""
 
 
+# Detecta contenido que se sale de la pantalla o que pisa el pie / el hueco de la batería.
+COMPROBAR_MAQUETA = """() => {
+  const W = 1072, H = 1448, pie = document.querySelector('.foot');
+  const tope = pie ? pie.getBoundingClientRect().top : H;
+  const bat = {l: %d, t: %d, r: %d, b: %d};
+  for (const e of document.body.querySelectorAll('*')) {
+    if (pie && (e === pie || pie.contains(e))) continue;
+    const r = e.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    if (r.right > W + 1 || r.bottom > H + 1) return 'se sale: ' + e.className + ' ' + (e.textContent || '').trim().slice(0, 30);
+    if (!e.classList.contains('graf') && (e.textContent || '').trim() && e.scrollWidth > e.clientWidth + 2 && e.clientWidth > 0) return 'texto desbordado: ' + (e.textContent || '').trim().slice(0, 30);
+    if ((e.textContent || '').trim() && !e.children.length && r.right > W - 54) return 'invade el margen: ' + (e.textContent || '').trim().slice(0, 30);
+    if (r.bottom > tope + 1) return 'pisa el pie: ' + e.className + ' ' + (e.textContent || '').trim().slice(0, 30);
+    const hoja = !e.children.length && (e.textContent || '').trim();
+    if (hoja && r.left < bat.r && r.right > bat.l && r.top < bat.b && r.bottom > bat.t)
+      return 'pisa la batería: ' + (e.textContent || '').trim().slice(0, 30);
+  }
+  return '';
+}""" % (BAT_X, BAT_Y, BAT_X + BAT_W, BAT_Y + BAT_H)
+
+
 def render(paginas: dict[str, str], carpeta: Path):
     from PIL import Image
     from playwright.sync_api import sync_playwright
@@ -409,11 +434,19 @@ def render(paginas: dict[str, str], carpeta: Path):
         except Exception:  # noqa: BLE001
             br = pw.chromium.launch(channel="chrome")
         page = br.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+        avisos = 0
         for nombre, html in paginas.items():
             page.set_content(html)
+            page.evaluate("document.fonts.ready.then(() => true)")
+            fallo = page.evaluate(COMPROBAR_MAQUETA)
+            if fallo:
+                avisos += 1
+                if avisos <= 3:
+                    print(f"  AVISO maquetación {nombre}: {fallo}")
             png = page.screenshot()
             Image.open(io.BytesIO(png)).convert("L").save(carpeta / nombre, optimize=True)
         br.close()
+    print(f"  maquetación: {len(paginas) - avisos}/{len(paginas)} pantallas sin problemas")
 
 
 VISTA = """<!doctype html><html lang="es"><head><meta charset="utf-8">
