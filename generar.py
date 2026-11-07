@@ -16,6 +16,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tarfile
 import urllib.request
@@ -24,6 +25,8 @@ from pathlib import Path
 from statistics import mean
 from zoneinfo import ZoneInfo
 
+VERSION = "7.3"  # súbelo en cada cambio del generador
+COMMIT = (os.environ.get("GITHUB_SHA") or "local")[:7]
 MADRID = ZoneInfo("Europe/Madrid")
 W, H = 1072, 1448
 
@@ -339,7 +342,7 @@ def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | Non
 <div class="leyenda"><i></i>mejor franja de 3 h, buscando {alcance}</div>
 <div class="sec"><h2>Hoy <span>{euros(min(hoy_i.values()))} – {euros(max(hoy_i.values()))} €/kWh</span></h2>{grafico(hoy_i, d, h, 250, franja=franja_hoy, vmax=vmax, ref=ref)}</div>
 <div class="sec"><h2>Mañana <span>{DIAS[md.weekday()]} {md.day} {MESES[md.month - 1]}</span></h2>{man_html}</div>
-<div class="foot"><span>PVPC 2.0TD · con impuestos (IEE + IVA {int(IVA * 100)} %) · datos REE</span><span>act. {generado:%d/%m %H:%M}</span></div>
+<div class="foot"><span>PVPC 2.0TD · con impuestos (IEE + IVA {int(IVA * 100)} %) · datos REE</span><span>v{VERSION} · {COMMIT} · act. {generado:%d/%m %H:%M}</span></div>
 </body></html>"""
 
 
@@ -392,7 +395,7 @@ def pantalla_manana(md: date, man: dict[int, float], hoy: dict[int, float] | Non
 </div>
 <div class="cmp">{cmp_hoy}</div>
 <div class="sec">{grafico(mi, md, None, 430, franja=(h_ini3, h_fin3))}</div>
-<div class="foot"><span>PVPC 2.0TD · con impuestos · datos REE</span><span>act. {generado:%d/%m %H:%M}</span></div>
+<div class="foot"><span>PVPC 2.0TD · con impuestos · datos REE</span><span>v{VERSION} · {COMMIT} · act. {generado:%d/%m %H:%M}</span></div>
 </body></html>"""
 
 
@@ -419,7 +422,7 @@ VISTA = """<!doctype html><html lang="es"><head><meta charset="utf-8">
 @media (prefers-color-scheme:dark){{body{{background:#161616;color:#eee}}}}
 img{{max-width:100%;width:420px;border:1px solid #888;background:#fff;display:block;margin:12px 0}}
 code{{font-size:.9em}}</style></head><body>
-<h1>Panel de luz</h1><p>Actualizado: {generado}. Días con precios: {dias}.</p>
+<h1>Panel de luz</h1><p>Actualizado: {generado}. Días con precios: {dias}.<br>Generador v{version} · commit {commit}</p>
 <p>Ahora el Kindle muestra:</p><img id="i" alt="pantalla actual">
 <p>Resumen de mañana:</p><img id="m" alt="resumen de mañana" onerror="this.style.display='none'">
 <p><a href="paquete.tar">paquete.tar</a> · <a href="estado.json">estado.json</a></p>
@@ -427,9 +430,10 @@ code{{font-size:.9em}}</style></head><body>
 var d=new Date(),p=function(n){{return(n<10?'0':'')+n}};
 var f=new Intl.DateTimeFormat('en-CA',{{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}}).formatToParts(d);
 var g={{}};f.forEach(function(x){{g[x.type]=x.value}});
-document.getElementById('i').src='precios/'+g.year+g.month+g.day+'_'+g.hour+'.png';
+var v='?v={marca}';
+document.getElementById('i').src='{carpeta}/'+g.year+g.month+g.day+'_'+g.hour+'.png'+v;
 var t=new Date(Date.UTC(+g.year,+g.month-1,+g.day+1));
-document.getElementById('m').src='precios/'+t.getUTCFullYear()+p(t.getUTCMonth()+1)+p(t.getUTCDate())+'_manana.png';
+document.getElementById('m').src='{carpeta}/'+t.getUTCFullYear()+p(t.getUTCMonth()+1)+p(t.getUTCDate())+'_manana.png'+v;
 </script></body></html>"""
 
 
@@ -458,14 +462,24 @@ def main():
 
     out = Path(a.salida)
     render(paginas, out / "precios")
+    (out / "version.txt").write_text(f"generador v{VERSION} {COMMIT} {ahora:%Y-%m-%d %H:%M}\n")
     with tarfile.open(out / "paquete.tar", "w") as tar:
+        tar.add(out / "version.txt", arcname="version.txt")
         for nombre in sorted(paginas):
             tar.add(out / "precios" / nombre, arcname=f"precios/{nombre}")
     dias = [str(hoy)] + ([str(man)] if p_man else [])
-    estado = {"generado": ahora.isoformat(timespec="minutes"), "dias": dias, "imagenes": len(paginas),
+    estado = {"version": VERSION, "commit": COMMIT,
+              "generado": ahora.isoformat(timespec="minutes"), "dias": dias, "imagenes": len(paginas),
               "precios_sin_impuestos_eur_kwh": {str(hoy): p_hoy, **({str(man): p_man} if p_man else {})}}
     (out / "estado.json").write_text(json.dumps(estado, ensure_ascii=False, indent=1))
-    (out / "index.html").write_text(VISTA.format(generado=f"{ahora:%d/%m/%Y %H:%M}", dias=", ".join(dias)))
+    # Copia de las pantallas en una carpeta única por ejecución: la vista previa nunca sale de caché
+    marca = f"{ahora:%Y%m%d%H%M%S}"
+    carpeta = f"r/{marca}"
+    (out / carpeta).mkdir(parents=True, exist_ok=True)
+    for nombre in paginas:
+        shutil.copy2(out / "precios" / nombre, out / carpeta / nombre)
+    (out / "index.html").write_text(VISTA.format(generado=f"{ahora:%d/%m/%Y %H:%M}", dias=", ".join(dias),
+                                                     marca=marca, carpeta=carpeta, version=VERSION, commit=COMMIT))
     (out / ".nojekyll").write_text("")
     print(f"OK: {len(paginas)} pantallas para {', '.join(dias)}")
 
