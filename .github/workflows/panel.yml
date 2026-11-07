@@ -1,4 +1,10 @@
+# Panel luz PVPC · workflow v7.4
+# (súbelo junto con VERSION en generar.py y VERSION_KINDLE en comun.sh)
 name: Panel luz (precios PVPC)
+run-name: Panel luz · workflow v7.4
+
+env:
+  WORKFLOW_VERSION: "7.4"
 
 on:
   schedule:
@@ -21,9 +27,9 @@ jobs:
   generar:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -38,7 +44,7 @@ jobs:
       - name: Descargar precios y dibujar pantallas
         run: python generar.py --salida _site
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -62,4 +68,4 @@ jobs:
       url: ${{ steps.despliegue.outputs.page_url }}
     steps:
       - id: despliegue
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
