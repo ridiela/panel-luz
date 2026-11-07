@@ -29,6 +29,7 @@ VERSION = "7.4"
 # Hueco para el indicador de batería que pinta el Kindle encima (mismas cifras en comun.sh)
 BAT_X, BAT_Y, BAT_W, BAT_H = 892, 40, 120, 52  # súbelo en cada cambio del generador
 COMMIT = (os.environ.get("GITHUB_SHA") or "local")[:7]
+WORKFLOW = os.environ.get("WORKFLOW_VERSION") or "?"  # versión del panel.yml que lo ejecuta
 MADRID = ZoneInfo("Europe/Madrid")
 W, H = 1072, 1448
 
@@ -455,7 +456,7 @@ VISTA = """<!doctype html><html lang="es"><head><meta charset="utf-8">
 @media (prefers-color-scheme:dark){{body{{background:#161616;color:#eee}}}}
 img{{max-width:100%;width:420px;border:1px solid #888;background:#fff;display:block;margin:12px 0}}
 code{{font-size:.9em}}</style></head><body>
-<h1>Panel de luz</h1><p>Actualizado: {generado}. Días con precios: {dias}.<br>Generador v{version} · commit {commit}</p>
+<h1>Panel de luz</h1><p>Actualizado: {generado}. Días con precios: {dias}.<br>Generador v{version} · workflow v{workflow} · commit {commit}</p>
 <p>Ahora el Kindle muestra:</p><img id="i" alt="pantalla actual">
 <p>Resumen de mañana:</p><img id="m" alt="resumen de mañana" onerror="this.style.display='none'">
 <p><a href="paquete.tar">paquete.tar</a> · <a href="estado.json">estado.json</a></p>
@@ -480,7 +481,7 @@ def main():
     ahora = (datetime.fromisoformat(a.ahora).replace(tzinfo=MADRID) if a.ahora else datetime.now(MADRID))
     prueba = Path(a.datos_prueba) if a.datos_prueba else None
     hoy, man = ahora.date(), ahora.date() + timedelta(days=1)
-    print(f"Generando panel ({ahora:%Y-%m-%d %H:%M} Madrid)")
+    print(f"Generando panel ({ahora:%Y-%m-%d %H:%M} Madrid) · generador v{VERSION} · workflow v{WORKFLOW} · {COMMIT}")
 
     p_hoy = precios_dia(hoy, prueba)
     p_man = precios_dia(man, prueba)
@@ -495,13 +496,13 @@ def main():
 
     out = Path(a.salida)
     render(paginas, out / "precios")
-    (out / "version.txt").write_text(f"generador v{VERSION} {COMMIT} {ahora:%Y-%m-%d %H:%M}\n")
+    (out / "version.txt").write_text(f"generador v{VERSION} workflow v{WORKFLOW} {COMMIT} {ahora:%Y-%m-%d %H:%M}\n")
     with tarfile.open(out / "paquete.tar", "w") as tar:
         tar.add(out / "version.txt", arcname="version.txt")
         for nombre in sorted(paginas):
             tar.add(out / "precios" / nombre, arcname=f"precios/{nombre}")
     dias = [str(hoy)] + ([str(man)] if p_man else [])
-    estado = {"version": VERSION, "commit": COMMIT,
+    estado = {"version": VERSION, "workflow": WORKFLOW, "commit": COMMIT,
               "generado": ahora.isoformat(timespec="minutes"), "dias": dias, "imagenes": len(paginas),
               "precios_sin_impuestos_eur_kwh": {str(hoy): p_hoy, **({str(man): p_man} if p_man else {})}}
     (out / "estado.json").write_text(json.dumps(estado, ensure_ascii=False, indent=1))
@@ -512,7 +513,7 @@ def main():
     for nombre in paginas:
         shutil.copy2(out / "precios" / nombre, out / carpeta / nombre)
     (out / "index.html").write_text(VISTA.format(generado=f"{ahora:%d/%m/%Y %H:%M}", dias=", ".join(dias),
-                                                     marca=marca, carpeta=carpeta, version=VERSION, commit=COMMIT))
+                                                     marca=marca, carpeta=carpeta, version=VERSION, workflow=WORKFLOW, commit=COMMIT))
     (out / ".nojekyll").write_text("")
     print(f"OK: {len(paginas)} pantallas para {', '.join(dias)}")
 
