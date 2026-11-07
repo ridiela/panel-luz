@@ -154,9 +154,21 @@ def mejor_franja(serie: list[tuple[date, int, float]], horas: int = 2):
     return mejor
 
 
-def grafico(precios: dict[int, float], d: date, marca: int | None, alto: int, etiquetas=True) -> str:
+def escala_comun(*dias: dict[int, float] | None) -> float:
+    """Máximo común (redondeado a 0,05 €) para que varios gráficos sean comparables."""
+    vals = [v for d in dias if d for v in d.values()]
+    top = max(max(vals), 0.05)
+    return (int(top / 0.05) + 1) * 0.05
+
+
+def grafico(precios: dict[int, float], d: date, marca: int | None, alto: int, etiquetas=True,
+            franja: tuple[int, int] | None = None, vmax: float | None = None,
+            ref: list[float] | None = None) -> str:
+    """Barras horarias. vmax y ref (valores para los umbrales de color) se pueden compartir
+    entre gráficos para que la altura y el tono signifiquen lo mismo en todos."""
     vals = list(precios.values())
-    vmax = max(max(vals), 0.01)
+    vmax = vmax or escala_comun(precios)
+    ref = ref or vals
     barras = []
     for h in range(24):
         if h not in precios:
@@ -164,16 +176,31 @@ def grafico(precios: dict[int, float], d: date, marca: int | None, alto: int, et
             continue
         v = precios[h]
         alto_b = max(4, int(alto * max(v, 0) / vmax))
-        c = clase(v, vals)
+        c = clase(v, ref)
         mk = '<div class="mk"></div>' if h == marca else ""
         barras.append(f'<div class="b"><div class="r {c}{" ya" if marca is not None and h < marca else ""}" '
                       f'style="height:{alto_b}px"></div>{mk}</div>')
+    # Líneas de referencia cada 0,10 €/kWh, iguales en todos los gráficos
+    lineas = ""
+    paso = 0.10 if vmax > 0.25 else 0.05
+    g = paso
+    while g < vmax - 0.001:
+        y = int(alto * g / vmax)
+        lineas += (f'<div class="rej" style="bottom:{y}px"></div>'
+                   f'<div class="rejl" style="bottom:{y}px">{euros(g, 2)}</div>')
+        g += paso
     eje = ""
     if etiquetas:
         eje = '<div class="eje">' + "".join(f'<span style="left:{h / 24 * 100:.3f}%">{h}</span>'
                                             for h in range(0, 25, 3)) + "</div>"
     extra = "margin-top:52px;" if marca is not None else ""
-    return f'<div class="graf" style="height:{alto}px;{extra}">{"".join(barras)}</div>{eje}'
+    banda = ""
+    if franja:
+        a, b = franja
+        banda = (f'<div class="banda" style="left:{a / 24 * 100:.3f}%;width:{(b - a) / 24 * 100:.3f}%">'
+                 f'</div>')
+    return (f'<div class="graf" style="height:{alto}px;{extra}">{lineas}{"".join(barras)}{banda}</div>'
+            f'{eje if not franja else eje.replace("class=\"eje\"", "class=\"eje con-banda\"")}')
 
 
 CSS = """
@@ -202,56 +229,115 @@ body { padding:48px 60px; position:relative; }
 .r.ya { opacity:.35; }
 .mk { position:absolute; top:-46px; left:50%; margin-left:-20px; width:0; height:0;
   border-left:20px solid transparent; border-right:20px solid transparent; border-top:30px solid #000; }
-.eje { position:relative; height:38px; margin-top:6px; font-size:26px; font-weight:600; }
+.eje { position:relative; height:38px; margin-top:6px; margin-right:58px; font-size:26px; font-weight:600; }
 .eje span { position:absolute; transform:translateX(-50%); }
 .eje span:first-child { transform:none; } .eje span:last-child { transform:translateX(-100%); }
 .rango { font-size:26px; color:#222; margin-top:2px; }
 .tip { margin-top:26px; border:4px solid #000; padding:16px 22px; font-size:31px; font-weight:600; line-height:1.3; }
 .tip b { font-weight:800; }
+.man-status { height:72px; border:4px solid #000; display:flex; align-items:center; justify-content:space-between;
+  padding:0 20px; font-size:28px; font-weight:700; margin-bottom:12px; }
+.man-status strong { font-size:31px; font-weight:900; letter-spacing:.5px; }
+.man-status.ready { background:#fff; }
+.man-status.pending { height:120px; border-style:dashed; margin-bottom:0; }
+.man-status .dato { font-size:29px; font-weight:800; }
 .nodata { height:120px; border:3px dashed #000; display:flex; align-items:center; justify-content:center;
   font-size:32px; font-weight:600; }
 .foot { position:absolute; left:60px; right:60px; bottom:34px; font-size:22px; color:#333;
   display:flex; justify-content:space-between; }
+.graf { position:relative; margin-right:58px; }
+.rej { position:absolute; left:0; right:0; border-top:2px dashed #8a8a8a; z-index:0; }
+.rejl { position:absolute; right:-60px; width:54px; transform:translateY(50%); font-size:22px; font-weight:700; color:#333; text-align:right; }
+.b { z-index:1; }
+.banda { position:absolute; bottom:-24px; height:16px; background:#000; }
+.eje.con-banda { margin-top:30px; }
+.prox { margin-top:20px; border:10px solid #000; padding:18px 26px 20px; }
+.prox .l { font-size:28px; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; }
+.prox .h { font-size:92px; font-weight:900; line-height:1.05; margin-top:6px; }
+.prox .h small { font-size:44px; font-weight:800; }
+.prox .p { font-size:32px; font-weight:700; margin-top:8px; }
+.prox.ya { background:#000; color:#fff; }
+.ahora { margin-top:18px; display:flex; align-items:center; justify-content:space-between;
+  border:4px solid #000; padding:12px 22px; }
+.ahora .v { font-size:56px; font-weight:900; }
+.ahora .v small { font-size:30px; font-weight:700; }
+.ahora .c { font-size:30px; font-weight:800; letter-spacing:1px; }
+.ahora.cara { background:#000; color:#fff; } .ahora.normal { background:#b8b8b8; }
+.leyenda { font-size:24px; font-weight:600; margin-top:2px; }
+.leyenda i { display:inline-block; width:46px; height:12px; background:#000; vertical-align:middle; margin-right:8px; }
 """
+
+
+def proxima_franja(d: date, h: int, hoy_i: dict[int, float], man_i: dict[int, float] | None, horas: int = 3):
+    """Mejor bloque de `horas` seguidas desde esta hora hasta donde haya datos (hoy y, si hay, mañana)."""
+    serie = [(d, k, hoy_i[k]) for k in sorted(hoy_i) if k >= h]
+    if man_i:
+        serie += [(d + timedelta(days=1), k, man_i[k]) for k in sorted(man_i)]
+    n = min(horas, len(serie))
+    if n == 0:
+        return None
+    mejor = None
+    for i in range(len(serie) - n + 1):
+        bloque = serie[i:i + n]
+        m = mean(x[2] for x in bloque)
+        if mejor is None or m < mejor[0]:
+            mejor = (m, bloque)
+    return mejor
 
 
 def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | None, generado: datetime) -> str:
     hoy_i = {k: v * FACTOR_IMPUESTOS for k, v in hoy.items()}
     man_i = {k: v * FACTOR_IMPUESTOS for k, v in man.items()} if man else None
+    md = d + timedelta(days=1)
     v = hoy_i[h]
     c = clase(v, list(hoy_i.values()))
-    sig = hoy_i.get(h + 1) if h + 1 in hoy_i else (man_i or {}).get(0)
-    sig_txt = f"Siguiente hora: <b>{euros(sig)} €</b>" if sig is not None else "Siguiente hora: —"
     per = NOMBRE_PERIODO[periodo(d, h)]
 
-    def franja_txt(m):
-        return f"<b>{m[2]}–{m[3]} h</b> ({euros(m[0])} €)"
-
-    resto_hoy = [(d, k, hoy_i[k]) for k in sorted(hoy_i) if k >= h]
-    mf_hoy = mejor_franja(resto_hoy, 2)
-    mf_man = mejor_franja([(d, k, man_i[k]) for k in sorted(man_i)], 2) if man_i else None
-    partes = []
-    if mf_hoy:
-        if mf_hoy[2] == h:
-            partes.append(f"<b>Ahora</b> empieza la mejor franja que queda hoy ({euros(mf_hoy[0])} €)")
+    pf = proxima_franja(d, h, hoy_i, man_i, 3)
+    franja_hoy = franja_man = None
+    if pf:
+        media, bloque = pf
+        (d0, h0, _), (d1, h1, _) = bloque[0], bloque[-1]
+        fin = (h1 + 1) % 24
+        if d0 == d:
+            franja_hoy = (h0, 24 if d1 != d else h1 + 1)
+        if d1 == md:
+            franja_man = (0 if d0 != md else h0, h1 + 1)
+        dia = "hoy" if d0 == d else "mañana"
+        if d1 != d0:
+            cuando = f"{h0}–{fin} h <small>(cruza medianoche)</small>"
         else:
-            partes.append(f"Hoy: {franja_txt(mf_hoy)}")
-    if mf_man:
-        partes.append(f"mañana: {franja_txt(mf_man)}")
-    tip = ("Para lavadora o lavavajillas (2 h) · " + " · ".join(partes)) if partes else ""
+            cuando = f"{dia} {h0}–{fin} h" if dia == "mañana" else f"{h0}–{fin} h"
+        horas_txt = f"{len(bloque)} h" if len(bloque) == 3 else f"{len(bloque)} h, las que quedan con datos"
+        if d0 == d and h0 == h:
+            prox = (f'<div class="prox ya"><div class="l">Estás en la mejor franja ({horas_txt})</div>'
+                    f'<div class="h">hasta las {fin}:00</div>'
+                    f'<div class="p">media {euros(media)} €/kWh</div></div>')
+        else:
+            ahorro = (1 - media / v) * 100
+            extra = f" · {ahorro:.0f} % menos que ahora" if ahorro >= 1 else ""
+            prox = (f'<div class="prox"><div class="l">Próxima mejor franja ({horas_txt})</div>'
+                    f'<div class="h">{cuando}</div>'
+                    f'<div class="p">media {euros(media)} €/kWh{extra}</div></div>')
+    else:
+        prox = ""
 
-    lo, hi = min(hoy_i.values()), max(hoy_i.values())
-    man_html = (grafico(man_i, d + timedelta(days=1), None, 120) +
-                f'<div class="rango">De {euros(min(man_i.values()))} a {euros(max(man_i.values()))} €/kWh</div>'
-                if man_i else '<div class="nodata">Los precios de mañana salen hacia las 20:30</div>')
-    md = d + timedelta(days=1)
+    alcance = "hasta mañana a medianoche" if man_i else "hasta medianoche (mañana aún sin precios)"
+    vmax = escala_comun(hoy_i, man_i)
+    ref = list(hoy_i.values()) + (list(man_i.values()) if man_i else [])
+    if man_i:
+        man_html = (grafico(man_i, md, None, 250, franja=franja_man, vmax=vmax, ref=ref)
+                    + f'<div class="rango">De {euros(min(man_i.values()))} a {euros(max(man_i.values()))} €/kWh</div>')
+    else:
+        man_html = ('<div class="man-status pending"><strong>PRECIOS DE MAÑANA</strong>'
+                    '<span class="dato">Llegan hacia las 21:00</span></div>')
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>
 <div class="top"><span><b>{DIAS[d.weekday()].capitalize()} {d.day} {MESES[d.month - 1]}</b> · {h}:00–{h + 1}:00</span><span>periodo {per}</span></div>
-<div class="big {c}"><div class="v">{euros(v)}<small> €/kWh</small></div><div class="c">{c.upper()} PARA HOY</div></div>
-<div class="sub"><span>{sig_txt}</span><span>Hoy: {euros(lo)} – {euros(hi)} €</span></div>
-<div class="sec"><h2>Hoy</h2>{grafico(hoy_i, d, h, 250)}</div>
+{prox}
+<div class="ahora {c}"><span class="v">Ahora {euros(v)}<small> €/kWh</small></span><span class="c">{c.upper()} PARA HOY</span></div>
+<div class="leyenda"><i></i>mejor franja de 3 h, buscando {alcance}</div>
+<div class="sec"><h2>Hoy <span>{euros(min(hoy_i.values()))} – {euros(max(hoy_i.values()))} €/kWh</span></h2>{grafico(hoy_i, d, h, 250, franja=franja_hoy, vmax=vmax, ref=ref)}</div>
 <div class="sec"><h2>Mañana <span>{DIAS[md.weekday()]} {md.day} {MESES[md.month - 1]}</span></h2>{man_html}</div>
-<div class="tip">{tip}</div>
 <div class="foot"><span>PVPC 2.0TD · con impuestos (IEE + IVA {int(IVA * 100)} %) · datos REE</span><span>act. {generado:%d/%m %H:%M}</span></div>
 </body></html>"""
 
@@ -260,54 +346,51 @@ CSS_MAN = """
 .hd { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:8px solid #000; padding-bottom:14px; }
 .hd .t { font-size:96px; font-weight:900; letter-spacing:2px; line-height:1; }
 .hd .d { font-size:42px; font-weight:700; }
-.kpis { display:flex; gap:18px; margin-top:28px; }
-.kpi { flex:1; border:4px solid #000; padding:14px 16px; text-align:center; }
-.kpi .l { font-size:26px; font-weight:700; text-transform:uppercase; letter-spacing:1px; }
-.kpi .n { font-size:56px; font-weight:900; margin-top:6px; }
-.kpi .s { font-size:26px; font-weight:600; margin-top:2px; }
-.kpi.neg { background:#000; color:#fff; }
-.cmp { margin-top:22px; font-size:36px; font-weight:700; text-align:center; }
-.lista { margin-top:26px; font-size:34px; font-weight:600; line-height:1.45; }
-.lista b { font-weight:800; }
+.franja3 { margin-top:30px; border:8px solid #000; padding:24px 30px 22px; text-align:center; }
+.franja3 .l { font-size:30px; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; }
+.franja3 .h { font-size:104px; font-weight:900; line-height:1.05; margin-top:8px; }
+.franja3 .p { font-size:38px; font-weight:700; margin-top:8px; }
+.resumen { margin-top:20px; display:flex; gap:18px; }
+.resumen .dato { flex:1; border:4px solid #000; padding:15px 18px; text-align:center; }
+.resumen .l { font-size:24px; font-weight:700; text-transform:uppercase; letter-spacing:1px; }
+.resumen .n { font-size:46px; font-weight:900; margin-top:5px; }
+.cmp { margin-top:18px; font-size:30px; font-weight:700; text-align:center; }
 """
 
 
 def pantalla_manana(md: date, man: dict[int, float], hoy: dict[int, float] | None, generado: datetime) -> str:
-    """Resumen del día siguiente, para rotar con la pantalla de ahora."""
+    """Resumen del día siguiente centrado en la mejor franja consecutiva de 3 horas."""
     mi = {k: v * FACTOR_IMPUESTOS for k, v in man.items()}
-    media = mean(mi.values())
-    h_min = min(mi, key=mi.get)
-    h_max = max(mi, key=mi.get)
-    cmp = ""
+    media_dia = mean(mi.values())
+    serie = [(md, k, mi[k]) for k in sorted(mi)]
+    mejor3 = mejor_franja(serie, 3)
+    media3, _, h_ini3, h_fin3 = mejor3
+
+    vs_dia = (media3 / media_dia - 1) * 100
+    ahorro_dia = f"{abs(vs_dia):.0f} % por debajo de la media del día" if vs_dia < 0 else "similar a la media del día"
+
+    cmp_hoy = ""
     if hoy:
         media_hoy = mean(v * FACTOR_IMPUESTOS for v in hoy.values())
-        dif = (media / media_hoy - 1) * 100
+        dif = (media_dia / media_hoy - 1) * 100
         if abs(dif) < 3:
-            cmp = "Parecido a hoy de media"
+            cmp_hoy = "Mañana será parecido a hoy de media"
         else:
-            cmp = f"Un {abs(dif):.0f} % más {'caro' if dif > 0 else 'barato'} que hoy de media"
-    serie = [(md, k, mi[k]) for k in sorted(mi)]
-    f2 = mejor_franja(serie, 2)
-    f3 = mejor_franja(serie, 3)
-    baratas = sorted(sorted(mi, key=mi.get)[:4])
-    caras = sorted(sorted(mi, key=mi.get, reverse=True)[:4])
-    def horas(hs):
-        return ", ".join(f"{h}–{h + 1}" for h in hs) + " h"
+            cmp_hoy = f"Mañana será un {abs(dif):.0f} % más {'caro' if dif > 0 else 'barato'} que hoy de media"
+
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{CSS}{CSS_MAN}</style></head><body>
 <div class="hd"><span class="t">MAÑANA</span><span class="d">{DIAS[md.weekday()]} {md.day} {MESES[md.month - 1]}</span></div>
-<div class="kpis">
-  <div class="kpi"><div class="l">Más barata</div><div class="n">{euros(mi[h_min])}</div><div class="s">{h_min}–{h_min + 1} h</div></div>
-  <div class="kpi"><div class="l">Media</div><div class="n">{euros(media)}</div><div class="s">€/kWh</div></div>
-  <div class="kpi neg"><div class="l">Más cara</div><div class="n">{euros(mi[h_max])}</div><div class="s">{h_max}–{h_max + 1} h</div></div>
+<div class="franja3">
+  <div class="l">Mejor franja de 3 h consecutivas</div>
+  <div class="h">{h_ini3:02d}–{h_fin3:02d} h</div>
+  <div class="p">media {euros(media3)} €/kWh</div>
 </div>
-<div class="cmp">{cmp}</div>
-<div class="sec">{grafico(mi, md, None, 470)}</div>
-<div class="lista">
-  Lavadora o lavavajillas (2 h): <b>{f2[2]}–{f2[3]} h</b> · {euros(f2[0])} €<br>
-  Programa largo (3 h): <b>{f3[2]}–{f3[3]} h</b> · {euros(f3[0])} €<br>
-  Horas más baratas: <b>{horas(baratas)}</b><br>
-  Evita: <b>{horas(caras)}</b>
+<div class="resumen">
+  <div class="dato"><div class="l">Franja vs. día</div><div class="n">{ahorro_dia}</div></div>
+  <div class="dato"><div class="l">Media del día</div><div class="n">{euros(media_dia)} €/kWh</div></div>
 </div>
+<div class="cmp">{cmp_hoy}</div>
+<div class="sec">{grafico(mi, md, None, 430, franja=(h_ini3, h_fin3))}</div>
 <div class="foot"><span>PVPC 2.0TD · con impuestos · datos REE</span><span>act. {generado:%d/%m %H:%M}</span></div>
 </body></html>"""
 
@@ -337,7 +420,7 @@ img{{max-width:100%;width:420px;border:1px solid #888;background:#fff;display:bl
 code{{font-size:.9em}}</style></head><body>
 <h1>Panel de luz</h1><p>Actualizado: {generado}. Días con precios: {dias}.</p>
 <p>Ahora el Kindle muestra:</p><img id="i" alt="pantalla actual">
-<p>Mañana (rota con la anterior cuando ya hay precios):</p><img id="m" alt="resumen de mañana" onerror="this.style.display='none'">
+<p>Resumen de mañana:</p><img id="m" alt="resumen de mañana" onerror="this.style.display='none'">
 <p><a href="paquete.tar">paquete.tar</a> · <a href="estado.json">estado.json</a></p>
 <script>
 var d=new Date(),p=function(n){{return(n<10?'0':'')+n}};
