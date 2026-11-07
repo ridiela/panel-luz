@@ -299,6 +299,7 @@ def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | Non
         media, bloque = pf
         (d0, h0, _), (d1, h1, _) = bloque[0], bloque[-1]
         fin = (h1 + 1) % 24
+        fin_txt = "24" if (d1 == d0 and h1 == 23) else str(fin)
         if d0 == d:
             franja_hoy = (h0, 24 if d1 != d else h1 + 1)
         if d1 == md:
@@ -307,11 +308,11 @@ def pantalla(d: date, h: int, hoy: dict[int, float], man: dict[int, float] | Non
         if d1 != d0:
             cuando = f"{h0}–{fin} h <small>(cruza medianoche)</small>"
         else:
-            cuando = f"{dia} {h0}–{fin} h" if dia == "mañana" else f"{h0}–{fin} h"
+            cuando = f"{dia} {h0}–{fin_txt} h" if dia == "mañana" else f"{h0}–{fin_txt} h"
         horas_txt = f"{len(bloque)} h" if len(bloque) == 3 else f"{len(bloque)} h, las que quedan con datos"
         if d0 == d and h0 == h:
             prox = (f'<div class="prox ya"><div class="l">Estás en la mejor franja ({horas_txt})</div>'
-                    f'<div class="h">hasta las {fin}:00</div>'
+                    f'<div class="h">{"hasta medianoche" if fin == 0 else f"hasta las {fin}:00"}</div>'
                     f'<div class="p">media {euros(media)} €/kWh</div></div>')
         else:
             ahorro = (1 - media / v) * 100
